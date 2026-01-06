@@ -89,3 +89,79 @@ class TestEmailModel:
             email.validate_email()
 
         assert "exceeds maximum length" in str(exc_info.value)
+
+    def test_validate_email_with_plus_sign(self):
+        """Test validate_email accepts email with plus sign."""
+        email = Email(
+            person_id='person-123',
+            email='user+tag@example.com'
+        )
+
+        email.validate_email()
+
+    def test_validate_email_with_dots_and_dashes(self):
+        """Test validate_email accepts email with dots and dashes."""
+        email = Email(
+            person_id='person-123',
+            email='first.last-name@my-domain.co.uk'
+        )
+
+        email.validate_email()
+
+    def test_validate_email_with_underscore(self):
+        """Test validate_email accepts email with underscore."""
+        email = Email(
+            person_id='person-123',
+            email='user_name@example.com'
+        )
+
+        email.validate_email()
+
+    def test_validate_email_missing_at_symbol(self):
+        """Test validate_email rejects email without @ symbol."""
+        email = Email(
+            person_id='person-123',
+            email='invalidemail.com'
+        )
+
+        with pytest.raises(ModelValidationError) as exc_info:
+            email.validate_email()
+
+        assert "Invalid email address format" in str(exc_info.value)
+
+    def test_validate_email_missing_domain(self):
+        """Test validate_email rejects email without domain."""
+        email = Email(
+            person_id='person-123',
+            email='user@'
+        )
+
+        with pytest.raises(ModelValidationError) as exc_info:
+            email.validate_email()
+
+        assert "Invalid email address format" in str(exc_info.value)
+
+    def test_validate_email_with_spaces(self):
+        """Test validate_email rejects email with spaces."""
+        email = Email(
+            person_id='person-123',
+            email='user name@example.com'
+        )
+
+        with pytest.raises(ModelValidationError) as exc_info:
+            email.validate_email()
+
+        assert "Invalid email address format" in str(exc_info.value)
+
+    def test_validate_email_exactly_254_characters(self):
+        """Test validate_email accepts email with exactly 254 characters."""
+        local_part = 'a' * 64
+        domain_part = 'b' * 188 + '.com'
+        email_address = local_part + '@' + domain_part
+
+        email = Email(
+            person_id='person-123',
+            email=email_address
+        )
+
+        email.validate_email()
