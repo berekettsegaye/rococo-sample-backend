@@ -11,6 +11,7 @@ include = [
     "common/repositories/*",
     "common/services/*",
     "common/utils/*",
+    "common/helpers/*",
     "flask/app/helpers/*"
 ]
 
