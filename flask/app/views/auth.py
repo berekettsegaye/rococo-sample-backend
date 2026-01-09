@@ -47,23 +47,33 @@ class Login(Resource):
     @auth_api.expect(
         {'type': 'object', 'properties': {
             'email': {'type': 'string'},
-            'password': {'type': 'string'}
+            'password': {'type': 'string'},
+            'two_factor_code': {'type': 'string'}
         }}
     )
     def post(self):
-        parsed_body = parse_request_body(request, ['email', 'password'])
-        validate_required_fields(parsed_body)
+        parsed_body = parse_request_body(request, ['email', 'password', 'two_factor_code'])
+        # Only email and password are required, two_factor_code is optional
+        validate_required_fields({'email': parsed_body.get('email'), 'password': parsed_body.get('password')})
 
         auth_service = AuthService(config)
-        access_token, expiry = auth_service.login_user_by_email_password(
-            parsed_body['email'], 
-            parsed_body['password']
-        )
 
-        person_service = PersonService(config)
-        person = person_service.get_person_by_email_address(email_address=parsed_body['email'])
+        try:
+            access_token, expiry = auth_service.login_user_by_email_password(
+                parsed_body['email'],
+                parsed_body['password'],
+                parsed_body.get('two_factor_code')
+            )
 
-        return get_success_response(person=person.as_dict(), access_token=access_token, expiry=expiry)
+            person_service = PersonService(config)
+            person = person_service.get_person_by_email_address(email_address=parsed_body['email'])
+
+            return get_success_response(person=person.as_dict(), access_token=access_token, expiry=expiry)
+        except Exception as e:
+            # Check if 2FA is required
+            if hasattr(e, 'two_factor_required') and e.two_factor_required:
+                return get_failure_response(message=str(e), two_factor_required=True)
+            raise
 
 
 @auth_api.route('/forgot_password', doc=dict(description="Send reset password link"))
@@ -167,6 +177,161 @@ class OAuthExchange(Resource):
 
         except Exception as e:
             return get_failure_response(message=f"OAuth authentication failed: {str(e)}")
+
+
+@auth_api.route('/2fa/setup')
+class TwoFactorSetup(Resource):
+    @login_required()
+    @auth_api.expect(
+        {'type': 'object', 'properties': {}}
+    )
+    def post(self, person):
+        """
+        Initiate two-factor authentication setup.
+        Returns QR code and backup codes for user to save.
+
+        Args:
+            person: Current authenticated user (injected by login_required decorator)
+        """
+        person_service = PersonService(config)
+        email_obj = person_service.get_primary_email_by_person_id(person.entity_id)
+
+        if not email_obj:
+            return get_failure_response(message="Email not found for user.")
+
+        auth_service = AuthService(config)
+        setup_data = auth_service.setup_two_factor(email_obj.email)
+
+        return get_success_response(
+            message="Two-factor authentication setup initiated. Scan the QR code with your authenticator app.",
+            secret=setup_data['secret'],
+            qr_code=setup_data['qr_code_base64'],
+            backup_codes=setup_data['backup_codes']
+        )
+
+
+@auth_api.route('/2fa/verify-and-enable')
+class TwoFactorVerifyAndEnable(Resource):
+    @login_required()
+    @auth_api.expect(
+        {'type': 'object', 'properties': {
+            'code': {'type': 'string'}
+        }}
+    )
+    def post(self, person):
+        """
+        Verify TOTP code and enable two-factor authentication.
+
+        Args:
+            person: Current authenticated user (injected by login_required decorator)
+        """
+        parsed_body = parse_request_body(request, ['code'])
+        validate_required_fields(parsed_body)
+
+        person_service = PersonService(config)
+        email_obj = person_service.get_primary_email_by_person_id(person.entity_id)
+
+        if not email_obj:
+            return get_failure_response(message="Email not found for user.")
+
+        auth_service = AuthService(config)
+        result = auth_service.verify_and_enable_two_factor(email_obj.email, parsed_body['code'])
+
+        return get_success_response(
+            message="Two-factor authentication enabled successfully.",
+            backup_codes=result['backup_codes']
+        )
+
+
+@auth_api.route('/2fa/disable')
+class TwoFactorDisable(Resource):
+    @login_required()
+    @auth_api.expect(
+        {'type': 'object', 'properties': {
+            'password': {'type': 'string'}
+        }}
+    )
+    def post(self, person):
+        """
+        Disable two-factor authentication with password confirmation.
+
+        Args:
+            person: Current authenticated user (injected by login_required decorator)
+        """
+        parsed_body = parse_request_body(request, ['password'])
+        validate_required_fields(parsed_body)
+
+        person_service = PersonService(config)
+        email_obj = person_service.get_primary_email_by_person_id(person.entity_id)
+
+        if not email_obj:
+            return get_failure_response(message="Email not found for user.")
+
+        auth_service = AuthService(config)
+        auth_service.disable_two_factor_for_user(email_obj.email, parsed_body['password'])
+
+        return get_success_response(message="Two-factor authentication disabled successfully.")
+
+
+@auth_api.route('/2fa/regenerate-backup-codes')
+class TwoFactorRegenerateBackupCodes(Resource):
+    @login_required()
+    @auth_api.expect(
+        {'type': 'object', 'properties': {
+            'code': {'type': 'string'}
+        }}
+    )
+    def post(self, person):
+        """
+        Regenerate backup codes for two-factor authentication.
+
+        Args:
+            person: Current authenticated user (injected by login_required decorator)
+        """
+        parsed_body = parse_request_body(request, ['code'])
+        validate_required_fields(parsed_body)
+
+        person_service = PersonService(config)
+        email_obj = person_service.get_primary_email_by_person_id(person.entity_id)
+
+        if not email_obj:
+            return get_failure_response(message="Email not found for user.")
+
+        auth_service = AuthService(config)
+        result = auth_service.regenerate_backup_codes_for_user(email_obj.email, parsed_body['code'])
+
+        return get_success_response(
+            message="Backup codes regenerated successfully.",
+            backup_codes=result['backup_codes']
+        )
+
+
+@auth_api.route('/2fa/status')
+class TwoFactorStatus(Resource):
+    @login_required()
+    def get(self, person):
+        """
+        Get two-factor authentication status for the current user.
+
+        Args:
+            person: Current authenticated user (injected by login_required decorator)
+        """
+        person_service = PersonService(config)
+        email_obj = person_service.get_primary_email_by_person_id(person.entity_id)
+
+        if not email_obj:
+            return get_failure_response(message="Email not found for user.")
+
+        from common.services import LoginMethodService
+        login_method_service = LoginMethodService(config)
+        login_method = login_method_service.get_login_method_by_email_id(email_obj.entity_id)
+
+        if not login_method:
+            return get_failure_response(message="Login method not found for user.")
+
+        return get_success_response(
+            two_factor_enabled=login_method.has_two_factor_enabled
+        )
 
 
 @auth_api.route('/logout')

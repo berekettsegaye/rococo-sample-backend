@@ -16,6 +16,10 @@ from common.helpers.string_utils import urlsafe_base64_encode, force_bytes
 from common.helpers.string_utils import force_str, urlsafe_base64_decode
 from common.helpers.exceptions import InputValidationError, APIException
 from common.helpers.auth import generate_access_token
+from common.helpers.two_factor import (
+    generate_totp_secret, generate_totp_uri, generate_qr_code_base64,
+    generate_backup_codes, verify_totp_code
+)
 
 
 class AuthService:
@@ -108,28 +112,54 @@ class AuthService:
             logger.info(confirmation_link)
             self.message_sender.send_message(self.EMAIL_TRANSMITTER_QUEUE_NAME, message)
 
-    def login_user_by_email_password(self, email: str, password: str):
+    def login_user_by_email_password(self, email: str, password: str, two_factor_code: str = None):
+        """
+        Login user with email and password, with optional 2FA code.
+
+        Args:
+            email: User's email address
+            password: User's password
+            two_factor_code: Optional 2FA code (TOTP or backup code)
+
+        Returns:
+            tuple: (access_token, expiry) if login successful
+
+        Raises:
+            InputValidationError: If login fails or 2FA code is required/invalid
+        """
         email_obj = self.email_service.get_email_by_email_address(email)
 
         if not email_obj:
             raise InputValidationError("Email is not registered.")
-        
+
         login_method = self.login_method_service.get_login_method_by_email_id(email_obj.entity_id)
-        
+
         if not login_method:
             raise InputValidationError("Login method not found for this email.")
-        
+
         # Check if this is an OAuth account
         if login_method.is_oauth_method:
             provider_name = login_method.oauth_provider_name or "OAuth provider"
             raise InputValidationError(f"This account was created using {provider_name}. Please use the {provider_name} sign-in option instead of email/password.")
-        
+
         # Check if password is None (shouldn't happen for email/password accounts, but safety check)
         if not login_method.password:
             raise InputValidationError("This account does not have a password set. Please use the appropriate sign-in method.")
 
         if not check_password_hash(login_method.password, password):
             raise InputValidationError('Incorrect email or password.')
+
+        # Check if 2FA is enabled
+        if login_method.has_two_factor_enabled:
+            if not two_factor_code:
+                # Return error indicating 2FA code is required
+                error = InputValidationError("Two-factor authentication code is required.")
+                error.two_factor_required = True
+                raise error
+
+            # Verify the 2FA code
+            if not self.login_method_service.verify_two_factor_code(login_method, two_factor_code):
+                raise InputValidationError("Invalid two-factor authentication code.")
 
         person = self.person_service.get_person_by_id(login_method.person_id)
 
@@ -313,3 +343,158 @@ class AuthService:
         access_token, expiry = generate_access_token(login_method, person=person_obj, email=email_obj)
 
         return access_token, expiry, person_obj
+
+    def setup_two_factor(self, email: str):
+        """
+        Initiate 2FA setup for a user.
+
+        Args:
+            email: User's email address
+
+        Returns:
+            dict: Contains 'secret', 'qr_code_base64', 'backup_codes', and 'uri'
+
+        Raises:
+            InputValidationError: If email not found or 2FA is disabled
+        """
+        if not self.config.TWO_FACTOR_ENABLED:
+            raise InputValidationError("Two-factor authentication is not enabled.")
+
+        email_obj = self.email_service.get_email_by_email_address(email)
+        if not email_obj:
+            raise InputValidationError("Email is not registered.")
+
+        login_method = self.login_method_service.get_login_method_by_email_id(email_obj.entity_id)
+        if not login_method:
+            raise InputValidationError("Login method not found for this email.")
+
+        # Generate TOTP secret
+        secret = generate_totp_secret()
+
+        # Generate QR code URI
+        uri = generate_totp_uri(secret, email, self.config.TWO_FACTOR_ISSUER_NAME)
+
+        # Generate QR code as base64 image
+        qr_code_base64 = generate_qr_code_base64(uri)
+
+        # Generate backup codes
+        backup_codes = generate_backup_codes(self.config.TWO_FACTOR_BACKUP_CODE_COUNT)
+
+        # Store the secret temporarily (not enabled yet, will be enabled after verification)
+        login_method.two_factor_secret = secret
+        login_method.two_factor_enabled = False
+        self.login_method_service.save_login_method(login_method)
+
+        return {
+            'secret': secret,
+            'qr_code_base64': qr_code_base64,
+            'backup_codes': backup_codes,
+            'uri': uri
+        }
+
+    def verify_and_enable_two_factor(self, email: str, code: str):
+        """
+        Verify a TOTP code and enable 2FA for a user.
+
+        Args:
+            email: User's email address
+            code: TOTP code from authenticator app
+
+        Returns:
+            dict: Contains 'backup_codes' that user should save
+
+        Raises:
+            InputValidationError: If verification fails or 2FA not set up
+        """
+        email_obj = self.email_service.get_email_by_email_address(email)
+        if not email_obj:
+            raise InputValidationError("Email is not registered.")
+
+        login_method = self.login_method_service.get_login_method_by_email_id(email_obj.entity_id)
+        if not login_method:
+            raise InputValidationError("Login method not found for this email.")
+
+        if not login_method.two_factor_secret:
+            raise InputValidationError("Two-factor authentication has not been set up. Please start the setup process first.")
+
+        # Verify the code
+        if not verify_totp_code(login_method.two_factor_secret, code):
+            raise InputValidationError("Invalid verification code. Please try again.")
+
+        # Generate backup codes
+        backup_codes = generate_backup_codes(self.config.TWO_FACTOR_BACKUP_CODE_COUNT)
+
+        # Enable 2FA
+        self.login_method_service.enable_two_factor(login_method, login_method.two_factor_secret, backup_codes)
+
+        return {
+            'backup_codes': backup_codes
+        }
+
+    def disable_two_factor_for_user(self, email: str, password: str):
+        """
+        Disable 2FA for a user after password confirmation.
+
+        Args:
+            email: User's email address
+            password: User's password for confirmation
+
+        Raises:
+            InputValidationError: If password is incorrect or 2FA is not enabled
+        """
+        email_obj = self.email_service.get_email_by_email_address(email)
+        if not email_obj:
+            raise InputValidationError("Email is not registered.")
+
+        login_method = self.login_method_service.get_login_method_by_email_id(email_obj.entity_id)
+        if not login_method:
+            raise InputValidationError("Login method not found for this email.")
+
+        # Verify password
+        if not login_method.password or not check_password_hash(login_method.password, password):
+            raise InputValidationError("Incorrect password.")
+
+        if not login_method.has_two_factor_enabled:
+            raise InputValidationError("Two-factor authentication is not enabled.")
+
+        # Disable 2FA
+        self.login_method_service.disable_two_factor(login_method)
+
+    def regenerate_backup_codes_for_user(self, email: str, verification_code: str):
+        """
+        Regenerate backup codes for a user.
+
+        Args:
+            email: User's email address
+            verification_code: TOTP code or existing backup code for verification
+
+        Returns:
+            dict: Contains new 'backup_codes'
+
+        Raises:
+            InputValidationError: If verification fails or 2FA is not enabled
+        """
+        email_obj = self.email_service.get_email_by_email_address(email)
+        if not email_obj:
+            raise InputValidationError("Email is not registered.")
+
+        login_method = self.login_method_service.get_login_method_by_email_id(email_obj.entity_id)
+        if not login_method:
+            raise InputValidationError("Login method not found for this email.")
+
+        if not login_method.has_two_factor_enabled:
+            raise InputValidationError("Two-factor authentication is not enabled.")
+
+        # Verify the code (TOTP or backup code)
+        if not self.login_method_service.verify_two_factor_code(login_method, verification_code):
+            raise InputValidationError("Invalid verification code.")
+
+        # Generate new backup codes
+        new_backup_codes = generate_backup_codes(self.config.TWO_FACTOR_BACKUP_CODE_COUNT)
+
+        # Save new backup codes
+        self.login_method_service.regenerate_backup_codes(login_method, new_backup_codes)
+
+        return {
+            'backup_codes': new_backup_codes
+        }

@@ -55,6 +55,14 @@ class Config(BaseConfig):
     MICROSOFT_CLIENT_ID: str = Field(env='MICROSOFT_CLIENT_ID', default="")
     MICROSOFT_CLIENT_SECRET: str = Field(env='MICROSOFT_CLIENT_SECRET', default="")
 
+    # Two-Factor Authentication Configuration
+    # The issuer name displayed in authenticator apps (e.g., Google Authenticator)
+    TWO_FACTOR_ISSUER_NAME: str = Field(env='TWO_FACTOR_ISSUER_NAME', default="Rococo Sample App")
+    # Number of backup codes to generate for 2FA recovery
+    TWO_FACTOR_BACKUP_CODE_COUNT: int = Field(env='TWO_FACTOR_BACKUP_CODE_COUNT', default=10)
+    # Feature flag to enable/disable 2FA functionality
+    TWO_FACTOR_ENABLED: bool = Field(env='TWO_FACTOR_ENABLED', default=True)
+
     @property
     def DEFAULT_USER_PASSWORD(self):
         import random, string
