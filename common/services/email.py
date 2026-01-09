@@ -21,6 +21,10 @@ class EmailService:
         email = self.email_repo.get_one({'entity_id': entity_id})
         return email
 
+    def get_email_by_person_id(self, person_id: str):
+        email = self.email_repo.get_one({'person_id': person_id})
+        return email
+
     def verify_email(self, email: Email) -> Email:
         email.is_verified = True
         return self.save_email(email)
