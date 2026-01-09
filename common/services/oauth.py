@@ -119,6 +119,6 @@ class OAuthClient:
         
         user_data = response.json()
         return {
-            "email": user_data.get("userPrincipalName") or user_data.get("mail"),
+            "email": user_data.get("mail") or user_data.get("userPrincipalName"),
             "name": user_data.get("displayName", "")
         }
