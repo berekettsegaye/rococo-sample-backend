@@ -455,3 +455,387 @@ class TestResetUserPassword:
         assert expiry == 1234567890
         mock_login_method_service.update_password.assert_called_once()
         mock_email_service.verify_email.assert_called_once()
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_reset_password_invalid_login_method(self, mock_person_service_class, mock_email_service_class,
+                                                 mock_login_method_service_class, mock_org_service_class,
+                                                 mock_por_service_class, mock_message_sender_class, mock_config):
+        """Test password reset with invalid login method."""
+        from common.helpers.string_utils import urlsafe_base64_encode, force_bytes
+
+        mock_login_method_service = mock_login_method_service_class.return_value
+        mock_login_method_service.get_login_method_by_id.return_value = None
+
+        auth_service = AuthService(mock_config)
+
+        uidb64 = urlsafe_base64_encode(force_bytes("invalid-login-id"))
+
+        with pytest.raises(APIException) as exc_info:
+            auth_service.reset_user_password("token", uidb64, "NewPassword1!")  # NOSONAR - Test data
+
+        assert "Invalid password reset URL" in str(exc_info.value)
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_reset_password_invalid_token(self, mock_person_service_class, mock_email_service_class,
+                                          mock_login_method_service_class, mock_org_service_class,
+                                          mock_por_service_class, mock_message_sender_class, mock_config):
+        """Test password reset with invalid token."""
+        from common.helpers.string_utils import urlsafe_base64_encode, force_bytes
+
+        mock_login_method_service = mock_login_method_service_class.return_value
+        login_method = MagicMock()
+        login_method.entity_id = "login-123"
+        login_method.password = "old_hashed_password"
+        mock_login_method_service.get_login_method_by_id.return_value = login_method
+
+        auth_service = AuthService(mock_config)
+
+        uidb64 = urlsafe_base64_encode(force_bytes("login-123"))
+
+        with pytest.raises(APIException) as exc_info:
+            auth_service.reset_user_password("invalid_token", uidb64, "NewPassword1!")  # NOSONAR - Test data
+
+        assert "Invalid reset password token" in str(exc_info.value)
+
+
+class TestTriggerForgotPasswordEmail:
+    """Tests for trigger_forgot_password_email method."""
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_trigger_forgot_password_email_not_registered(self, mock_person_service_class,
+                                                          mock_email_service_class,
+                                                          mock_login_method_service_class,
+                                                          mock_org_service_class,
+                                                          mock_por_service_class,
+                                                          mock_message_sender_class, mock_config):
+        """Test triggering forgot password for unregistered email."""
+        mock_email_service = mock_email_service_class.return_value
+        mock_email_service.get_email_by_email_address.return_value = None
+
+        auth_service = AuthService(mock_config)
+
+        with pytest.raises(APIException) as exc_info:
+            auth_service.trigger_forgot_password_email("test@example.com")
+
+        assert "not registered" in str(exc_info.value)
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_trigger_forgot_password_person_not_exist(self, mock_person_service_class,
+                                                       mock_email_service_class,
+                                                       mock_login_method_service_class,
+                                                       mock_org_service_class,
+                                                       mock_por_service_class,
+                                                       mock_message_sender_class, mock_config):
+        """Test triggering forgot password when person doesn't exist."""
+        mock_email_service = mock_email_service_class.return_value
+        email_obj = MagicMock(entity_id="email-123", person_id="person-123", email="test@example.com")
+        mock_email_service.get_email_by_email_address.return_value = email_obj
+
+        mock_person_service = mock_person_service_class.return_value
+        mock_person_service.get_person_by_id.return_value = None
+
+        auth_service = AuthService(mock_config)
+
+        with pytest.raises(APIException) as exc_info:
+            auth_service.trigger_forgot_password_email("test@example.com")
+
+        assert "Person does not exist" in str(exc_info.value)
+
+
+class TestPreparePasswordResetUrl:
+    """Tests for prepare_password_reset_url method."""
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_prepare_password_reset_url(self, mock_person_service_class, mock_email_service_class,
+                                       mock_login_method_service_class, mock_org_service_class,
+                                       mock_por_service_class, mock_message_sender_class, mock_config):
+        """Test preparing password reset URL."""
+        mock_config.VUE_APP_URI = "http://localhost:3000"
+        mock_config.RESET_TOKEN_EXPIRE = "3600"
+
+        auth_service = AuthService(mock_config)
+
+        login_method = MagicMock()
+        login_method.entity_id = "login-123"
+        login_method.person_id = "person-123"
+        login_method.email_id = "email-123"
+        login_method.password = "hashed_password"
+
+        url = auth_service.prepare_password_reset_url(login_method, "test@example.com")
+
+        assert url is not None
+        assert url.startswith("http://localhost:3000/set-password/")
+        assert "login-123" in url or "bG9naW4tMTIz" in url  # base64 encoded
+
+
+class TestSendPasswordResetEmail:
+    """Tests for send_password_reset_email method."""
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_send_password_reset_email(self, mock_person_service_class, mock_email_service_class,
+                                       mock_login_method_service_class, mock_org_service_class,
+                                       mock_por_service_class, mock_message_sender_class, mock_config):
+        """Test sending password reset email."""
+        mock_config.VUE_APP_URI = "http://localhost:3000"
+        mock_config.RESET_TOKEN_EXPIRE = "3600"
+        mock_config.QUEUE_NAME_PREFIX = "test_"
+        mock_config.EMAIL_SERVICE_PROCESSOR_QUEUE_NAME = "email_queue"
+
+        mock_message_sender = mock_message_sender_class.return_value
+
+        auth_service = AuthService(mock_config)
+
+        login_method = MagicMock()
+        login_method.entity_id = "login-123"
+        login_method.person_id = "person-123"
+        login_method.email_id = "email-123"
+        login_method.password = "hashed_password"
+
+        auth_service.send_password_reset_email("test@example.com", login_method)
+
+        mock_message_sender.send_message.assert_called_once()
+        call_args = mock_message_sender.send_message.call_args[0]
+        assert call_args[0] == "test_email_queue"
+        assert call_args[1]["event"] == "RESET_PASSWORD"
+        assert "test@example.com" in call_args[1]["to_emails"]
+
+
+class TestSendWelcomeEmail:
+    """Tests for send_welcome_email method."""
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_send_welcome_email(self, mock_person_service_class, mock_email_service_class,
+                                mock_login_method_service_class, mock_org_service_class,
+                                mock_por_service_class, mock_message_sender_class, mock_config):
+        """Test sending welcome email."""
+        mock_config.VUE_APP_URI = "http://localhost:3000"
+        mock_config.RESET_TOKEN_EXPIRE = "3600"
+        mock_config.QUEUE_NAME_PREFIX = "test_"
+        mock_config.EMAIL_SERVICE_PROCESSOR_QUEUE_NAME = "email_queue"
+
+        mock_message_sender = mock_message_sender_class.return_value
+
+        auth_service = AuthService(mock_config)
+
+        login_method = MagicMock()
+        login_method.entity_id = "login-123"
+        login_method.person_id = "person-123"
+        login_method.email_id = "email-123"
+        login_method.password = "hashed_password"
+
+        person = MagicMock()
+        person.first_name = "John"
+        person.last_name = "Doe"
+
+        auth_service.send_welcome_email(login_method, person, "test@example.com")
+
+        mock_message_sender.send_message.assert_called_once()
+        call_args = mock_message_sender.send_message.call_args[0]
+        assert call_args[0] == "test_email_queue"
+        assert call_args[1]["event"] == "WELCOME_EMAIL"
+        assert "test@example.com" in call_args[1]["to_emails"]
+        assert call_args[1]["data"]["recipient_name"] == "John Doe"
+
+
+class TestOAuthLoginEdgeCases:
+    """Tests for OAuth login edge cases."""
+
+    @patch('common.services.auth.generate_access_token')
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_oauth_login_existing_user_no_login_method(self, mock_person_service_class,
+                                                       mock_email_service_class,
+                                                       mock_login_method_service_class,
+                                                       mock_org_service_class,
+                                                       mock_por_service_class,
+                                                       mock_message_sender_class,
+                                                       mock_generate_token, mock_config):
+        """Test OAuth login for existing user without login method."""
+        mock_email_service = mock_email_service_class.return_value
+        existing_email = MagicMock(entity_id="email-123", person_id="person-123", is_verified=False)
+        mock_email_service.get_email_by_email_address.return_value = existing_email
+        mock_email_service.verify_email.return_value = existing_email
+
+        mock_person_service = mock_person_service_class.return_value
+        person = MagicMock(entity_id="person-123", first_name="John", last_name="Doe")
+        mock_person_service.get_person_by_id.return_value = person
+
+        mock_login_method_service = mock_login_method_service_class.return_value
+        mock_login_method_service.get_login_method_by_email_id.return_value = None
+        mock_login_method_service.save_login_method.return_value = MagicMock(entity_id="login-123")
+
+        mock_generate_token.return_value = ("access_token", 1234567890)
+
+        auth_service = AuthService(mock_config)
+
+        token, expiry, returned_person = auth_service.login_user_by_oauth(
+            "test@example.com", "John", "Doe", "google", {"sub": "123"}
+        )
+
+        assert token == "access_token"
+        assert expiry == 1234567890
+        mock_login_method_service.save_login_method.assert_called_once()
+
+    @patch('common.services.auth.generate_access_token')
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_oauth_login_existing_user_unverified_email(self, mock_person_service_class,
+                                                        mock_email_service_class,
+                                                        mock_login_method_service_class,
+                                                        mock_org_service_class,
+                                                        mock_por_service_class,
+                                                        mock_message_sender_class,
+                                                        mock_generate_token, mock_config):
+        """Test OAuth login verifies unverified email."""
+        mock_email_service = mock_email_service_class.return_value
+        existing_email = MagicMock(entity_id="email-123", person_id="person-123", is_verified=False)
+        mock_email_service.get_email_by_email_address.return_value = existing_email
+        verified_email = MagicMock(entity_id="email-123", person_id="person-123", is_verified=True)
+        mock_email_service.verify_email.return_value = verified_email
+
+        mock_person_service = mock_person_service_class.return_value
+        person = MagicMock(entity_id="person-123", first_name="John", last_name="Doe")
+        mock_person_service.get_person_by_id.return_value = person
+
+        mock_login_method_service = mock_login_method_service_class.return_value
+        login_method = MagicMock()
+        login_method.is_oauth_method = True
+        mock_login_method_service.get_login_method_by_email_id.return_value = login_method
+
+        mock_generate_token.return_value = ("access_token", 1234567890)
+
+        auth_service = AuthService(mock_config)
+
+        token, expiry, returned_person = auth_service.login_user_by_oauth(
+            "test@example.com", "John", "Doe", "google", {"sub": "123"}
+        )
+
+        assert token == "access_token"
+        mock_email_service.verify_email.assert_called_once_with(existing_email)
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_oauth_login_existing_user_no_person(self, mock_person_service_class,
+                                                 mock_email_service_class,
+                                                 mock_login_method_service_class,
+                                                 mock_org_service_class,
+                                                 mock_por_service_class,
+                                                 mock_message_sender_class, mock_config):
+        """Test OAuth login when person doesn't exist."""
+        mock_email_service = mock_email_service_class.return_value
+        existing_email = MagicMock(entity_id="email-123", person_id="person-123")
+        mock_email_service.get_email_by_email_address.return_value = existing_email
+
+        mock_person_service = mock_person_service_class.return_value
+        mock_person_service.get_person_by_id.return_value = None
+
+        auth_service = AuthService(mock_config)
+
+        with pytest.raises(APIException) as exc_info:
+            auth_service.login_user_by_oauth(
+                "test@example.com", "John", "Doe", "google", {"sub": "123"}
+            )
+
+        assert "Person not found" in str(exc_info.value)
+
+
+class TestLoginUserByEmailPasswordEdgeCases:
+    """Tests for login_user_by_email_password edge cases."""
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_login_no_login_method(self, mock_person_service_class, mock_email_service_class,
+                                   mock_login_method_service_class, mock_org_service_class,
+                                   mock_por_service_class, mock_message_sender_class, mock_config):
+        """Test login when no login method exists."""
+        mock_email_service = mock_email_service_class.return_value
+        email_obj = MagicMock(entity_id="email-123")
+        mock_email_service.get_email_by_email_address.return_value = email_obj
+
+        mock_login_method_service = mock_login_method_service_class.return_value
+        mock_login_method_service.get_login_method_by_email_id.return_value = None
+
+        auth_service = AuthService(mock_config)
+
+        with pytest.raises(InputValidationError) as exc_info:
+            auth_service.login_user_by_email_password("test@example.com", "password")  # NOSONAR - Test data
+
+        assert "Login method not found" in str(exc_info.value)
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_login_no_password_set(self, mock_person_service_class, mock_email_service_class,
+                                   mock_login_method_service_class, mock_org_service_class,
+                                   mock_por_service_class, mock_message_sender_class, mock_config):
+        """Test login when password is not set."""
+        mock_email_service = mock_email_service_class.return_value
+        email_obj = MagicMock(entity_id="email-123")
+        mock_email_service.get_email_by_email_address.return_value = email_obj
+
+        mock_login_method_service = mock_login_method_service_class.return_value
+        login_method = MagicMock()
+        login_method.is_oauth_method = False
+        login_method.password = None
+        mock_login_method_service.get_login_method_by_email_id.return_value = login_method
+
+        auth_service = AuthService(mock_config)
+
+        with pytest.raises(InputValidationError) as exc_info:
+            auth_service.login_user_by_email_password("test@example.com", "password")  # NOSONAR - Test data
+
+        assert "does not have a password set" in str(exc_info.value)
