@@ -751,11 +751,7 @@ class TestAuthService:
         mock_person_svc_class.return_value = mock_person_svc
         mock_login_svc_class.return_value = mock_login_svc
 
-        email_obj = MagicMock()
-        email_obj.entity_id = "email-123"
-        email_obj.person_id = "person-123"
-        email_obj.email = "test@example.com"
-
+        email_obj = Email(entity_id="email-123", person_id="person-123", email="test@example.com")
         person_obj = Person(entity_id="person-123", first_name="John", last_name="Doe")
         login_method = LoginMethod(entity_id="login-123", email_id="email-123", person_id="person-123", password="secret")  # NOSONAR
 
@@ -945,3 +941,326 @@ class TestAuthService:
         service = AuthService(mock_config)
         with pytest.raises(Exception):
             service.reset_user_password("token", "invalid-uidb64!!!", "NewPassword123!")  # NOSONAR
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_trigger_forgot_password_email_no_person(self, mock_person_svc_class,
+                                                       mock_email_svc_class,
+                                                       mock_login_svc_class,
+                                                       mock_org_svc_class,
+                                                       mock_role_svc_class,
+                                                       mock_msg_sender_class):
+        """Test trigger_forgot_password_email when person doesn't exist."""
+        mock_config = MagicMock()
+        mock_config.QUEUE_NAME_PREFIX = ""
+        mock_config.EMAIL_SERVICE_PROCESSOR_QUEUE_NAME = "email-queue"
+
+        mock_email_svc = MagicMock()
+        mock_person_svc = MagicMock()
+
+        mock_email_svc_class.return_value = mock_email_svc
+        mock_person_svc_class.return_value = mock_person_svc
+
+        email_obj = Email(entity_id="email-123", person_id="person-123", email="test@example.com")
+
+        mock_email_svc.get_email_by_email_address.return_value = email_obj
+        mock_person_svc.get_person_by_id.return_value = None
+
+        service = AuthService(mock_config)
+        with pytest.raises(APIException) as exc_info:
+            service.trigger_forgot_password_email("test@example.com")
+
+        assert "Person does not exist" in str(exc_info.value)
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_trigger_forgot_password_email_no_login_method(self, mock_person_svc_class,
+                                                             mock_email_svc_class,
+                                                             mock_login_svc_class,
+                                                             mock_org_svc_class,
+                                                             mock_role_svc_class,
+                                                             mock_msg_sender_class):
+        """Test trigger_forgot_password_email when login method doesn't exist."""
+        mock_config = MagicMock()
+        mock_config.QUEUE_NAME_PREFIX = ""
+        mock_config.EMAIL_SERVICE_PROCESSOR_QUEUE_NAME = "email-queue"
+
+        mock_email_svc = MagicMock()
+        mock_person_svc = MagicMock()
+        mock_login_svc = MagicMock()
+
+        mock_email_svc_class.return_value = mock_email_svc
+        mock_person_svc_class.return_value = mock_person_svc
+        mock_login_svc_class.return_value = mock_login_svc
+
+        email_obj = Email(entity_id="email-123", person_id="person-123", email="test@example.com")
+        person_obj = Person(entity_id="person-123", first_name="John", last_name="Doe")
+
+        mock_email_svc.get_email_by_email_address.return_value = email_obj
+        mock_person_svc.get_person_by_id.return_value = person_obj
+        mock_login_svc.get_login_method_by_email_id.return_value = None
+
+        service = AuthService(mock_config)
+        with pytest.raises(APIException) as exc_info:
+            service.trigger_forgot_password_email("test@example.com")
+
+        assert "Login method does not exist" in str(exc_info.value)
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_login_user_by_email_password_no_login_method(self, mock_person_svc_class, mock_email_svc_class,
+                                                            mock_login_svc_class, mock_org_svc_class,
+                                                            mock_role_svc_class, mock_msg_sender_class):
+        """Test login_user_by_email_password when no login method exists."""
+        mock_config = MagicMock()
+        mock_config.QUEUE_NAME_PREFIX = ""
+        mock_config.EMAIL_SERVICE_PROCESSOR_QUEUE_NAME = "email-queue"
+
+        mock_email_svc = MagicMock()
+        mock_login_svc = MagicMock()
+
+        mock_email_svc_class.return_value = mock_email_svc
+        mock_login_svc_class.return_value = mock_login_svc
+
+        email_obj = Email(entity_id="email-123", email="test@example.com", person_id="person-123")
+
+        mock_email_svc.get_email_by_email_address.return_value = email_obj
+        mock_login_svc.get_login_method_by_email_id.return_value = None
+
+        service = AuthService(mock_config)
+        with pytest.raises(InputValidationError) as exc_info:
+            service.login_user_by_email_password("test@example.com", "password")  # NOSONAR
+
+        assert "Login method not found" in str(exc_info.value)
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    @patch('common.services.auth.generate_access_token')
+    def test_login_user_by_oauth_existing_user_person_not_found(self, mock_gen_token,
+                                                                  mock_person_svc_class,
+                                                                  mock_email_svc_class,
+                                                                  mock_login_svc_class,
+                                                                  mock_org_svc_class,
+                                                                  mock_role_svc_class,
+                                                                  mock_msg_sender_class):
+        """Test login_user_by_oauth when person is not found."""
+        mock_config = MagicMock()
+        mock_config.QUEUE_NAME_PREFIX = ""
+        mock_config.EMAIL_SERVICE_PROCESSOR_QUEUE_NAME = "email-queue"
+
+        mock_email_svc = MagicMock()
+        mock_person_svc = MagicMock()
+        mock_login_svc = MagicMock()
+
+        mock_email_svc_class.return_value = mock_email_svc
+        mock_person_svc_class.return_value = mock_person_svc
+        mock_login_svc_class.return_value = mock_login_svc
+
+        existing_email = Email(entity_id="email-123", email="test@example.com", person_id="person-123")
+
+        mock_email_svc.get_email_by_email_address.return_value = existing_email
+        mock_person_svc.get_person_by_id.return_value = None
+
+        service = AuthService(mock_config)
+        with pytest.raises(APIException) as exc_info:
+            service.login_user_by_oauth(
+                email="test@example.com",
+                first_name="John",
+                last_name="Doe",
+                provider="google",
+                provider_data={"sub": "123"}
+            )
+
+        assert "Person not found" in str(exc_info.value)
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    @patch('common.services.auth.check_password_hash')
+    @patch('common.services.auth.generate_access_token')
+    def test_login_user_by_email_password_no_person(self, mock_gen_token, mock_check_hash,
+                                                      mock_person_svc_class, mock_email_svc_class,
+                                                      mock_login_svc_class, mock_org_svc_class,
+                                                      mock_role_svc_class, mock_msg_sender_class):
+        """Test login_user_by_email_password when person doesn't exist."""
+        mock_config = MagicMock()
+        mock_config.QUEUE_NAME_PREFIX = ""
+        mock_config.EMAIL_SERVICE_PROCESSOR_QUEUE_NAME = "email-queue"
+
+        mock_email_svc = MagicMock()
+        mock_person_svc = MagicMock()
+        mock_login_svc = MagicMock()
+
+        mock_email_svc_class.return_value = mock_email_svc
+        mock_person_svc_class.return_value = mock_person_svc
+        mock_login_svc_class.return_value = mock_login_svc
+
+        email_obj = Email(entity_id="email-123", email="test@example.com", person_id="person-123")
+        login_method = LoginMethod(
+            entity_id="login-123",
+            method_type=LoginMethodType.EMAIL_PASSWORD,
+            email_id="email-123",
+            person_id="person-123",
+            password="hashed_password"  # NOSONAR
+        )
+
+        mock_email_svc.get_email_by_email_address.return_value = email_obj
+        mock_login_svc.get_login_method_by_email_id.return_value = login_method
+        mock_person_svc.get_person_by_id.return_value = None
+        mock_check_hash.return_value = True
+
+        service = AuthService(mock_config)
+        with pytest.raises(InputValidationError) as exc_info:
+            service.login_user_by_email_password("test@example.com", "password123")  # NOSONAR
+
+        assert "Could not find complete user profile" in str(exc_info.value)
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    @patch('common.services.auth.generate_access_token')
+    def test_reset_user_password_no_email_found(self, mock_gen_token, mock_person_svc_class,
+                                                  mock_email_svc_class, mock_login_svc_class,
+                                                  mock_org_svc_class, mock_role_svc_class,
+                                                  mock_msg_sender_class):
+        """Test reset_user_password when email is not found."""
+        mock_config = MagicMock()
+        mock_config.QUEUE_NAME_PREFIX = ""
+        mock_config.EMAIL_SERVICE_PROCESSOR_QUEUE_NAME = "email-queue"
+
+        mock_email_svc = MagicMock()
+        mock_login_svc = MagicMock()
+
+        mock_email_svc_class.return_value = mock_email_svc
+        mock_login_svc_class.return_value = mock_login_svc
+
+        login_method = LoginMethod(
+            entity_id="login-123",
+            email_id="email-123",
+            person_id="person-123",
+            password="old_password_hash"  # NOSONAR
+        )
+
+        payload = {
+            "email": "test@example.com",
+            "email_id": "email-123",
+            "person_id": "person-123",
+            "exp": time.time() + 3600
+        }
+        token = jwt.encode(payload, "old_password_hash", algorithm='HS256')  # NOSONAR
+
+        from common.helpers.string_utils import urlsafe_base64_encode, force_bytes
+        uidb64 = urlsafe_base64_encode(force_bytes("login-123"))
+
+        mock_login_svc.get_login_method_by_id.return_value = login_method
+        mock_email_svc.get_email_by_id.return_value = None
+
+        service = AuthService(mock_config)
+        with pytest.raises(APIException) as exc_info:
+            service.reset_user_password(token, uidb64, "NewPassword123!")  # NOSONAR
+
+        assert "Email not found" in str(exc_info.value)
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    @patch('common.services.auth.generate_access_token')
+    def test_reset_user_password_no_person_found(self, mock_gen_token, mock_person_svc_class,
+                                                   mock_email_svc_class, mock_login_svc_class,
+                                                   mock_org_svc_class, mock_role_svc_class,
+                                                   mock_msg_sender_class):
+        """Test reset_user_password when person is not found."""
+        mock_config = MagicMock()
+        mock_config.QUEUE_NAME_PREFIX = ""
+        mock_config.EMAIL_SERVICE_PROCESSOR_QUEUE_NAME = "email-queue"
+
+        mock_email_svc = MagicMock()
+        mock_person_svc = MagicMock()
+        mock_login_svc = MagicMock()
+
+        mock_email_svc_class.return_value = mock_email_svc
+        mock_person_svc_class.return_value = mock_person_svc
+        mock_login_svc_class.return_value = mock_login_svc
+
+        login_method = LoginMethod(
+            entity_id="login-123",
+            email_id="email-123",
+            person_id="person-123",
+            password="old_password_hash"  # NOSONAR
+        )
+        email_obj = Email(entity_id="email-123", email="test@example.com", person_id="person-123")
+
+        payload = {
+            "email": "test@example.com",
+            "email_id": "email-123",
+            "person_id": "person-123",
+            "exp": time.time() + 3600
+        }
+        token = jwt.encode(payload, "old_password_hash", algorithm='HS256')  # NOSONAR
+
+        from common.helpers.string_utils import urlsafe_base64_encode, force_bytes
+        uidb64 = urlsafe_base64_encode(force_bytes("login-123"))
+
+        mock_login_svc.get_login_method_by_id.return_value = login_method
+        mock_email_svc.get_email_by_id.return_value = email_obj
+        mock_person_svc.get_person_by_id.return_value = None
+
+        service = AuthService(mock_config)
+        with pytest.raises(APIException) as exc_info:
+            service.reset_user_password(token, uidb64, "NewPassword123!")  # NOSONAR
+
+        assert "Person with email not found" in str(exc_info.value)
+
+    @patch('common.services.auth.MessageSender')
+    @patch('common.services.auth.PersonOrganizationRoleService')
+    @patch('common.services.auth.OrganizationService')
+    @patch('common.services.auth.LoginMethodService')
+    @patch('common.services.auth.EmailService')
+    @patch('common.services.auth.PersonService')
+    def test_reset_user_password_no_login_method_found(self, mock_person_svc_class,
+                                                         mock_email_svc_class, mock_login_svc_class,
+                                                         mock_org_svc_class, mock_role_svc_class,
+                                                         mock_msg_sender_class):
+        """Test reset_user_password when login method is not found."""
+        mock_config = MagicMock()
+        mock_config.QUEUE_NAME_PREFIX = ""
+        mock_config.EMAIL_SERVICE_PROCESSOR_QUEUE_NAME = "email-queue"
+
+        mock_login_svc = MagicMock()
+        mock_login_svc_class.return_value = mock_login_svc
+
+        from common.helpers.string_utils import urlsafe_base64_encode, force_bytes
+        uidb64 = urlsafe_base64_encode(force_bytes("login-123"))
+
+        mock_login_svc.get_login_method_by_id.return_value = None
+
+        service = AuthService(mock_config)
+        with pytest.raises(APIException) as exc_info:
+            service.reset_user_password("token", uidb64, "NewPassword123!")  # NOSONAR
+
+        assert "Invalid password reset URL" in str(exc_info.value)
