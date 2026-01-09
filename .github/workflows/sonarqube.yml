@@ -58,8 +58,8 @@ jobs:
 
       - name: SonarQube Install and Execute Analysis
         env:
-          SONAR_GLOBAL_TOKEN: ${{ secrets.SONAR_GLOBAL_TOKEN }}
-          SONAR_GLOBAL_HOST: ${{ secrets.SONAR_GLOBAL_HOST }}
+          SONAR_GLOBAL_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_GLOBAL_HOST: ${{ secrets.SONAR_HOST_URL }}
         run: |
           echo "Installing SonarScanner dependencies..."
           sudo apt-get update && sudo apt-get install -y openjdk-17-jre unzip
@@ -78,8 +78,8 @@ jobs:
             -Dsonar.tests=tests \
             -Dsonar.exclusions=tests/**,**/test_*.py,**/*_test.py,**/conftest.py,venv/**,.venv/**,.coverage,coverage.xml \
             -Dsonar.coverage.exclusions=tests/**,**/test_*.py,**/*_test.py,**/conftest.py \
-            -Dsonar.host.url=$SONAR_GLOBAL_HOST \
-            -Dsonar.token=$SONAR_GLOBAL_TOKEN \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.token=$SONAR_TOKEN \
             -Dsonar.scm.disabled=true \
             -Dsonar.python.version=3.11 \
             -Dsonar.sourceEncoding=UTF-8 \
