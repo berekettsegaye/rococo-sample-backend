@@ -85,4 +85,4 @@ jobs:
             -Dsonar.sourceEncoding=UTF-8 \
             -Dsonar.python.coverage.reportPaths=coverage.xml
           
-          echo "✅ SonarQube scan completed successfully."
+          echo "✅ SonarQube scan completed successfully"
