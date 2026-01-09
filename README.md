@@ -109,6 +109,6 @@ Inside Claude Code, run:
 /implement   - Code implementation
 ```
 
-Type the command in Claude Code chat to use it.
+Type the command in Claude Code chat to use it...
 
 ---
